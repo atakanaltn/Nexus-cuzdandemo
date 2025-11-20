@@ -4,404 +4,383 @@ import plotly.express as px
 import sqlite3
 import hashlib
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
-# --- 1. SİSTEM VE SAYFA AYARLARI ---
+# --- 1. SİSTEM AYARLARI ---
 st.set_page_config(
-    page_title="ONYX Hyper-Fluid",
+    page_title="ONYX V13",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- 2. MODERN CSS (GLASSMORPHISM & NEON) ---
+# --- 2. TASARIM (GLASSMORPHISM & DARK) ---
 st.markdown("""
     <style>
-        /* Ana Arka Plan (Derin Uzay Siyahı) */
+        /* Arka Plan */
         .stApp { 
             background-color: #09090b; 
-            background-image: radial-gradient(circle at 50% 0%, #1f1f2e 0%, #09090b 70%);
+            background-image: radial-gradient(circle at 50% 0%, #1f1f2e 0%, #09090b 80%);
         }
-        
-        /* Kartlar (Glassmorphism) */
-        div[data-testid="stMetric"], div.css-1r6slb0 {
+        /* Kartlar */
+        div[data-testid="stMetric"] {
             background: rgba(255, 255, 255, 0.03);
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 20px;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-            transition: transform 0.2s;
+            padding: 15px; border-radius: 12px;
         }
-        div[data-testid="stMetric"]:hover {
-            transform: translateY(-5px);
-            border-color: #D4AF37;
+        /* Tablar */
+        .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+        .stTabs [data-baseweb="tab"] {
+            height: 50px; white-space: pre-wrap; background-color: rgba(255,255,255,0.05);
+            border-radius: 5px; color: #fff;
         }
-        
-        /* Başlıklar ve Fontlar */
-        h1, h2, h3 { color: #ffffff !important; font-family: 'Inter', sans-serif; font-weight: 600; letter-spacing: -0.5px; }
-        p, div { color: #e0e0e0; font-family: 'Inter', sans-serif; }
-        
-        /* Tablo Tasarımı */
-        div[data-testid="stDataFrame"] {
-            background: rgba(255, 255, 255, 0.02);
-            border-radius: 12px;
-            padding: 10px;
-        }
+        .stTabs [aria-selected="true"] { background-color: #D4AF37; color: #000; }
         
         /* Sidebar */
-        section[data-testid="stSidebar"] { 
-            background-color: #050505; 
-            border-right: 1px solid #222; 
-        }
+        section[data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #222; }
         
-        /* Özel Butonlar */
+        /* Butonlar */
         div.stButton > button {
-            background: linear-gradient(45deg, #111, #222);
-            color: #D4AF37;
-            border: 1px solid #444;
-            border-radius: 8px;
-            font-weight: bold;
-            transition: all 0.3s ease;
+            background: #111; color: #D4AF37; border: 1px solid #444; width: 100%;
         }
-        div.stButton > button:hover {
-            background: linear-gradient(45deg, #D4AF37, #F1C40F);
-            color: #000;
-            border-color: #D4AF37;
-            box-shadow: 0 0 15px rgba(212, 175, 55, 0.4);
-        }
+        div.stButton > button:hover { border-color: #D4AF37; color: #FFF; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. VERİTABANI (HATA KORUMALI) ---
-DB_FILE = "onyx_v12.db"
+# --- 3. VERİTABANI ---
+DB_FILE = "onyx_v13.db"
 
 def run_query(query, params=(), fetch=False):
-    """Veritabanı işlemlerini güvenli hale getiren sarmalayıcı"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            c = conn.cursor()
-            c.execute(query, params)
-            if fetch:
-                return c.fetchall()
-            conn.commit()
-            return True
-    except Exception as e:
-        st.error(f"Veritabanı Hatası: {e}")
-        return False
+    with sqlite3.connect(DB_FILE) as conn:
+        c = conn.cursor()
+        c.execute(query, params)
+        if fetch: return c.fetchall()
+        conn.commit()
+        return True
 
 def init_db():
     queries = [
         '''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, join_date TEXT)''',
         '''CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, date TEXT, type TEXT, category TEXT, amount REAL, description TEXT)''',
-        '''CREATE TABLE IF NOT EXISTS limits (username TEXT PRIMARY KEY, monthly_limit REAL)''',
         '''CREATE TABLE IF NOT EXISTS cat_limits (username TEXT, category TEXT, limit_amount REAL, PRIMARY KEY (username, category))'''
     ]
-    for q in queries:
-        run_query(q)
+    for q in queries: run_query(q)
 
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
 # --- KATEGORİLER ---
-GIDER_KATEGORILERI = ["Abonelik - İnternet/Dijital", "Gıda - Market", "Gıda - Restoran", "Konut - Kira", "Fatura", "Ulaşım", "Kişisel", "Eğlence", "Eğitim", "Diğer"]
-GELIR_KATEGORILERI = ["Maaş", "Ek Gelir", "Yatırım", "Diğer"]
+# Giderler (Detaylı ve Limitlerde Kullanılacak)
+GIDER_KATEGORILERI = [
+    "Abonelik - İnternet/Dijital", 
+    "Gıda - Market", "Gıda - Restoran", 
+    "Konut - Kira", "Konut - Aidat", "Fatura - Elektrik/Su/Gaz", "Fatura - Telefon",
+    "Ulaşım - Yakıt", "Ulaşım - Toplu Taşıma/Taksi",
+    "Kişisel - Giyim", "Kişisel - Bakım", "Sağlık", 
+    "Eğlence", "Eğitim", "Borç Ödemesi", "Diğer Gider"
+]
+# Gelirler (Basit)
+GELIR_KATEGORILERI = ["Maaş", "Ek Gelir", "Yatırım", "Borç Alacağı", "Diğer Gelir"]
 
-# --- FONKSİYONLAR ---
+# --- YARDIMCI FONKSİYONLAR ---
 def get_user_data(username):
     try:
         conn = sqlite3.connect(DB_FILE)
         df = pd.read_sql_query("SELECT * FROM transactions WHERE username = ?", conn, params=(username,))
         conn.close()
-        if not df.empty:
-            df["date"] = pd.to_datetime(df["date"])
+        if not df.empty: df["date"] = pd.to_datetime(df["date"])
         return df
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-def get_greeting():
-    hour = datetime.now().hour
-    if hour < 12: return "Günaydın ☀️"
-    elif hour < 18: return "İyi Günler 🌤️"
-    else: return "İyi Akşamlar 🌙"
+def sonraki_odeme_bul(baslangic_tarihi):
+    bugun = datetime.now().date()
+    # Timestamp ise date'e çevir, string ise parse et
+    if isinstance(baslangic_tarihi, str):
+        odeme_tarihi = datetime.strptime(baslangic_tarihi, "%Y-%m-%d").date()
+    else:
+        odeme_tarihi = baslangic_tarihi.date()
+        
+    while odeme_tarihi < bugun:
+        odeme_tarihi += relativedelta(months=1)
+    return odeme_tarihi
 
 # --- BAŞLANGIÇ ---
 init_db()
-
-if 'logged_in' not in st.session_state:
-    st.session_state.update({'logged_in': False, 'username': ''})
+if 'logged_in' not in st.session_state: st.session_state.update({'logged_in': False, 'username': ''})
 
 # ==========================================
-# 1. GİRİŞ EKRANI (CENTERED & CLEAN)
+# 1. GİRİŞ EKRANI
 # ==========================================
 if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.markdown("<h1 style='text-align: center; color: #D4AF37 !important;'>ONYX PRO</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center;'>Yeni Nesil Varlık Yönetimi</p>", unsafe_allow_html=True)
-        
-        tab_login, tab_signup = st.tabs(["Giriş Yap", "Kayıt Ol"])
-        
-        with tab_login:
-            with st.form("login_form"):
-                user = st.text_input("Kullanıcı Adı")
-                pw = st.text_input("Şifre", type="password")
-                if st.form_submit_button("Giriş Yap", use_container_width=True):
-                    if user == "admin" and pw == "12345":
-                        st.session_state.update({'logged_in': True, 'username': 'admin'})
+        st.markdown("<h1 style='text-align: center; color:#D4AF37;'>ONYX PRO</h1>", unsafe_allow_html=True)
+        tab_l, tab_s = st.tabs(["Giriş Yap", "Kayıt Ol"])
+        with tab_l:
+            with st.form("login"):
+                u = st.text_input("Kullanıcı Adı")
+                p = st.text_input("Şifre", type="password")
+                if st.form_submit_button("Giriş"):
+                    if u=="admin" and p=="12345":
+                        st.session_state.update({'logged_in':True, 'username':'admin'})
                         st.rerun()
-                    else:
-                        res = run_query('SELECT * FROM users WHERE username =? AND password = ?', (user, make_hashes(pw)), fetch=True)
-                        if res:
-                            st.session_state.update({'logged_in': True, 'username': user})
-                            st.rerun()
-                        else:
-                            st.error("Hatalı bilgiler.")
-
-        with tab_signup:
-            with st.form("signup_form"):
-                new_user = st.text_input("Yeni Kullanıcı Adı")
-                new_pw = st.text_input("Yeni Şifre", type="password")
-                if st.form_submit_button("Hesap Oluştur", use_container_width=True):
-                    success = run_query('INSERT INTO users(username, password, join_date) VALUES (?,?,?)', 
-                                      (new_user, make_hashes(new_pw), datetime.now().strftime("%Y-%m-%d")))
-                    if success:
-                        st.success("Kayıt başarılı! Giriş yapabilirsiniz.")
-                    else:
-                        st.warning("Kullanıcı adı alınmış.")
+                    elif run_query('SELECT * FROM users WHERE username=? AND password=?', (u, make_hashes(p)), fetch=True):
+                        st.session_state.update({'logged_in':True, 'username':u})
+                        st.rerun()
+                    else: st.error("Hatalı bilgi.")
+        with tab_s:
+            with st.form("signup"):
+                nu = st.text_input("Kullanıcı Adı")
+                np = st.text_input("Şifre", type="password")
+                if st.form_submit_button("Kayıt Ol"):
+                    if run_query('INSERT INTO users VALUES (?,?,?)', (nu, make_hashes(np), datetime.now().strftime("%Y-%m-%d"))):
+                        st.success("Başarılı! Giriş yapın.")
+                    else: st.warning("Kullanıcı adı dolu.")
 
 # ==========================================
-# 2. ADMIN PANELİ
+# 2. ADMIN
 # ==========================================
 elif st.session_state['username'] == "admin":
     st.sidebar.title("👑 ADMIN")
-    if st.sidebar.button("Çıkış Yap"):
-        st.session_state['logged_in'] = False
+    if st.sidebar.button("Çıkış"): 
+        st.session_state['logged_in']=False
         st.rerun()
-    
-    st.title("Sistem Paneli")
+    st.title("Yönetici Paneli")
     conn = sqlite3.connect(DB_FILE)
-    users = pd.read_sql_query("SELECT username, join_date FROM users", conn)
+    users = pd.read_sql_query("SELECT * FROM users", conn)
     conn.close()
-    
-    c1, c2 = st.columns(2)
-    c1.metric("Toplam Kullanıcı", len(users))
-    c2.metric("Aktif Veritabanı", "Onyx V12")
-    
-    st.subheader("Kullanıcı Listesi")
-    st.dataframe(users, use_container_width=True)
-    
-    selected = st.selectbox("Kullanıcı İncele", users[users['username']!='admin']['username'].tolist())
-    if selected:
-        df = get_user_data(selected)
-        if not df.empty:
-            st.dataframe(df)
-        else:
-            st.info("Veri yok.")
+    st.dataframe(users)
 
 # ==========================================
-# 3. KULLANICI ARAYÜZÜ (FLUID DESIGN)
+# 3. KULLANICI PANELİ
 # ==========================================
 else:
     user = st.session_state['username']
     df = get_user_data(user)
     
-    # --- SIDEBAR ---
     with st.sidebar:
-        st.markdown(f"### 👤 {user.upper()}")
-        st.caption("Premium Üye")
+        st.title(f"👤 {user.upper()}")
         st.markdown("---")
-        menu = st.radio("Navigasyon", ["📊 Dashboard", "💎 İşlemler (Canlı)", "📉 Limitler & Analiz"])
+        menu = st.radio("MENÜ", [
+            "📊 Dashboard", 
+            "📝 İşlem Yönetimi", 
+            "📉 Analiz & Limitler", 
+            "🔄 Abonelik Takibi", 
+            "🗂️ Geçmiş Raporlar"
+        ])
         st.markdown("---")
-        if st.button("Güvenli Çıkış"):
-            st.session_state['logged_in'] = False
+        if st.button("Çıkış"):
+            st.session_state['logged_in']=False
             st.rerun()
 
     # --- DASHBOARD ---
     if menu == "📊 Dashboard":
-        # 1. HERO SECTION (Karşılama)
-        greeting = get_greeting()
-        st.markdown(f"## {greeting}, **{user}**")
-        
+        st.title("Finansal Özet")
         if df.empty:
-            st.info("Henüz bir finansal hareketiniz yok. 'İşlemler' menüsünden ilk kaydınızı oluşturun.")
+            st.info("Hoşgeldiniz! İşlem Yönetimi menüsünden ilk kaydınızı girin.")
         else:
-            # Hesaplamalar
             now = datetime.now()
+            # Sadece Bu Ay
             df_mo = df[(df['date'].dt.month == now.month) & (df['date'].dt.year == now.year)]
             
-            total_assets = df[df['type']=='Gelir']['amount'].sum() - df[df['type']=='Gider']['amount'].sum()
+            # Hesaplamalar
+            total_kasa = df[df['type']=='Gelir']['amount'].sum() - df[df['type']=='Gider']['amount'].sum()
             mo_inc = df_mo[df_mo['type']=='Gelir']['amount'].sum()
             mo_exp = df_mo[df_mo['type']=='Gider']['amount'].sum()
             mo_net = mo_inc - mo_exp
             
-            # Hero Card
-            hero_col, kpi_col = st.columns([1.5, 2.5])
-            with hero_col:
-                st.markdown(
-                    f"""
-                    <div style="background: linear-gradient(135deg, #D4AF37, #F1C40F); padding: 20px; border-radius: 15px; color: black; box-shadow: 0 10px 20px rgba(212, 175, 55, 0.3);">
-                        <h4 style="margin:0; color:black !important;">Toplam Varlık</h4>
-                        <h1 style="margin:0; font-size: 3rem; color:black !important;">₺{total_assets:,.2f}</h1>
-                        <p style="margin:5px 0 0 0; opacity: 0.8;">Finansal Özgürlük Puanı: {'Yüksek' if total_assets > 10000 else 'Gelişiyor'}</p>
-                    </div>
-                    """, unsafe_allow_html=True
-                )
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("💎 TOPLAM KASA", f"{total_kasa:,.2f} ₺")
+            c2.metric("📥 Bu Ay Gelir", f"{mo_inc:,.0f} ₺")
+            c3.metric("📤 Bu Ay Gider", f"{mo_exp:,.0f} ₺")
+            c4.metric("Net Durum", f"{mo_net:,.0f} ₺", delta_color="normal" if mo_net>=0 else "inverse")
             
-            with kpi_col:
-                k1, k2, k3 = st.columns(3)
-                k1.metric("📥 Bu Ay Gelir", f"{mo_inc:,.0f} ₺")
-                k2.metric("📤 Bu Ay Gider", f"{mo_exp:,.0f} ₺")
-                k3.metric("📈 Bu Ay Net", f"{mo_net:,.0f} ₺", delta_color="normal" if mo_net >= 0 else "inverse")
+            st.divider()
             
-            st.markdown("---")
-            
-            # Charts (Fluid Layout)
-            c_chart1, c_chart2 = st.columns([2, 1])
-            with c_chart1:
-                st.subheader("Nakit Akışı")
+            col_g1, col_g2 = st.columns([2,1])
+            with col_g1:
                 if not df_mo.empty:
+                    st.subheader("Nakit Akışı")
                     fig = px.area(df_mo, x="date", y="amount", color="type", 
-                                  color_discrete_map={"Gelir": "#00FFA3", "Gider": "#FF4B4B"}, 
-                                  template="plotly_dark")
-                    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=0,r=0,t=0,b=0), height=300)
+                                  color_discrete_map={"Gelir": "#00FFA3", "Gider": "#FF4B4B"}, template="plotly_dark")
                     st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.caption("Bu ay grafik verisi yok.")
-            
-            with c_chart2:
-                st.subheader("Harcama Pasta")
-                df_gider = df_mo[df_mo['type']=='Gider']
-                if not df_gider.empty:
-                    fig2 = px.pie(df_gider, values='amount', names='category', hole=0.6, template="plotly_dark", color_discrete_sequence=px.colors.sequential.RdBu)
-                    fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0,r=0,t=0,b=0), height=300, showlegend=False)
-                    fig2.update_traces(textposition='inside', textinfo='percent+label')
+            with col_g2:
+                 if not df_mo[df_mo['type']=='Gider'].empty:
+                    st.subheader("Harcama Dağılımı")
+                    fig2 = px.pie(df_mo[df_mo['type']=='Gider'], values='amount', names='category', hole=0.5, template="plotly_dark")
                     st.plotly_chart(fig2, use_container_width=True)
-                else:
-                    st.caption("Harcama yok.")
 
-    # --- İŞLEMLER (CANLI EDİTÖR) ---
-    elif menu == "💎 İşlemler (Canlı)":
-        st.title("İşlem Yönetimi")
+    # --- İŞLEM YÖNETİMİ (AYRILMIŞ SEKMELER - BUG FREE) ---
+    elif menu == "📝 İşlem Yönetimi":
+        st.title("İşlem Merkezi")
         
-        # 1. Hızlı Ekleme Paneli (Üstte, temiz)
-        with st.expander("➕ Yeni İşlem Ekle", expanded=True):
-            with st.form("quick_add", clear_on_submit=True):
-                c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1.5, 2])
-                t_type = c1.selectbox("Tür", ["Gider", "Gelir"])
-                t_date = c2.date_input("Tarih", datetime.now())
-                t_amt = c3.number_input("Tutar", min_value=0.0, step=50.0)
-                t_cat = c4.selectbox("Kategori", GIDER_KATEGORILERI if t_type == "Gider" else GELIR_KATEGORILERI)
-                t_desc = c5.text_input("Açıklama")
+        # BUG ÖNLEMEK İÇİN SEKMELER AYRILDI
+        tab_gider, tab_gelir, tab_liste = st.tabs(["🔴 Gider Ekle", "🟢 Gelir Ekle", "📋 Kayıt Defteri (Düzenle/Sil)"])
+        
+        # 1. GİDER EKLEME TABI
+        with tab_gider:
+            st.subheader("Harcama Girişi")
+            with st.form("gider_form", clear_on_submit=True):
+                c1, c2, c3, c4 = st.columns([1, 1, 1.5, 2])
+                d_date = c1.date_input("Tarih", datetime.now())
+                d_amt = c2.number_input("Tutar (TL)", min_value=0.0, step=50.0)
+                # SADECE GİDER KATEGORİLERİ
+                d_cat = c3.selectbox("Kategori", GIDER_KATEGORILERI)
+                d_desc = c4.text_input("Açıklama (Örn: Migros, Kira)")
                 
-                if st.form_submit_button("Kaydet 💾"):
+                if st.form_submit_button("Gideri Kaydet 🔴"):
                     run_query('INSERT INTO transactions(username, date, type, category, amount, description) VALUES (?,?,?,?,?,?)', 
-                              (user, t_date, t_type, t_cat, t_amt, t_desc))
-                    st.success("İşlem eklendi.")
+                              (user, d_date, "Gider", d_cat, d_amt, d_desc))
+                    st.success("Gider başarıyla işlendi.")
                     st.rerun()
 
-        st.divider()
-        
-        # 2. Canlı Düzenlenebilir Tablo (Altın Özellik)
-        st.subheader("📋 İşlem Geçmişi (Düzenlenebilir)")
-        st.caption("Tablodaki verilere çift tıklayarak düzenleyebilir, satırı seçip silebilirsiniz.")
-        
-        if not df.empty:
-            df_display = df[['id', 'date', 'type', 'category', 'amount', 'description']].sort_values('date', ascending=False)
-            
-            edited_df = st.data_editor(
-                df_display,
-                column_config={
-                    "id": None, # ID'yi gizle
-                    "date": st.column_config.DateColumn("Tarih", format="DD.MM.YYYY"),
-                    "type": st.column_config.SelectboxColumn("Tür", options=["Gelir", "Gider"], required=True),
-                    "category": st.column_config.SelectboxColumn("Kategori", options=GIDER_KATEGORILERI + GELIR_KATEGORILERI, required=True),
-                    "amount": st.column_config.NumberColumn("Tutar (TL)", format="%.2f ₺"),
-                    "description": st.column_config.TextColumn("Açıklama"),
-                },
-                num_rows="dynamic", # Silme ve ekleme aktif
-                use_container_width=True,
-                key="editor"
-            )
-            
-            # Değişiklikleri Algıla ve Veritabanına Yaz (Gelişmiş Senkronizasyon)
-            if st.session_state.get("editor"):
-                changes = st.session_state["editor"]
+        # 2. GELİR EKLEME TABI
+        with tab_gelir:
+            st.subheader("Para Girişi")
+            with st.form("gelir_form", clear_on_submit=True):
+                c1, c2, c3, c4 = st.columns([1, 1, 1.5, 2])
+                g_date = c1.date_input("Tarih", datetime.now(), key="g_date")
+                g_amt = c2.number_input("Tutar (TL)", min_value=0.0, step=50.0, key="g_amt")
+                # SADECE GELİR KATEGORİLERİ
+                g_cat = c3.selectbox("Kategori", GELIR_KATEGORILERI, key="g_cat")
+                g_desc = c4.text_input("Açıklama (Örn: Maaş, Prim)", key="g_desc")
                 
-                # A. Düzenlenenler
-                for idx, updates in changes.get("edited_rows", {}).items():
-                    row_id = df_display.iloc[idx]["id"]
-                    for col, val in updates.items():
-                        # Tarih düzeltmesi (datetime objesini string'e çevir)
-                        if col == "date": val = pd.to_datetime(val).strftime("%Y-%m-%d")
-                        run_query(f"UPDATE transactions SET {col} = ? WHERE id = ?", (val, row_id))
-                
-                # B. Silinenler
-                for idx in changes.get("deleted_rows", []):
-                    row_id = df_display.iloc[idx]["id"]
-                    run_query("DELETE FROM transactions WHERE id = ?", (row_id,))
-                
-                # C. Eklenenler
-                for row in changes.get("added_rows", []):
-                    # Eklenen satırların boş olmamasını kontrol et
-                    if row.get("amount") and row.get("type"):
-                         d = row.get("date", datetime.now().strftime("%Y-%m-%d"))
-                         run_query('INSERT INTO transactions(username, date, type, category, amount, description) VALUES (?,?,?,?,?,?)',
-                                  (user, d, row.get("type"), row.get("category", "Diğer"), row.get("amount"), row.get("description", "")))
+                if st.form_submit_button("Geliri Kaydet 🟢"):
+                    run_query('INSERT INTO transactions(username, date, type, category, amount, description) VALUES (?,?,?,?,?,?)', 
+                              (user, g_date, "Gelir", g_cat, g_amt, g_desc))
+                    st.success("Gelir başarıyla işlendi.")
+                    st.rerun()
 
-                # Eğer değişiklik varsa sayfayı yenile (ki tablo güncellensin)
-                if changes["edited_rows"] or changes["deleted_rows"] or changes["added_rows"]:
-                     st.toast("Veritabanı güncellendi!", icon="🔄")
-                     # Manuel rerun gerekebilir, ancak data_editor bazen kendi halleder.
-                     # st.rerun() 
+        # 3. DÜZENLEME TABI (DATA EDITOR)
+        with tab_liste:
+            st.subheader("Tüm Kayıtlar")
+            if not df.empty:
+                # Düzenlenebilir tablo (Kategori sütununu serbest bıraktık karışmaması için)
+                df_edit = df[['id', 'date', 'type', 'category', 'amount', 'description']].sort_values('date', ascending=False)
+                
+                changes = st.data_editor(
+                    df_edit,
+                    column_config={
+                        "id": None,
+                        "date": st.column_config.DateColumn("Tarih", format="DD.MM.YYYY"),
+                        "type": st.column_config.TextColumn("Tür", disabled=True), # Türü değiştirmeyi kapattık bug olmasın diye
+                        "category": st.column_config.SelectboxColumn("Kategori", options=GIDER_KATEGORILERI + GELIR_KATEGORILERI),
+                        "amount": st.column_config.NumberColumn("Tutar", format="%.2f ₺"),
+                        "description": st.column_config.TextColumn("Açıklama"),
+                    },
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    key="main_editor"
+                )
+                
+                # Değişiklikleri Veritabanına Yaz
+                if st.session_state.get("main_editor"):
+                     state = st.session_state["main_editor"]
+                     # Düzenleme
+                     for idx, row in state.get("edited_rows", {}).items():
+                         rid = df_edit.iloc[idx]['id']
+                         for k, v in row.items():
+                             if k == 'date': v = pd.to_datetime(v).strftime('%Y-%m-%d')
+                             run_query(f"UPDATE transactions SET {k}=? WHERE id=?", (v, rid))
+                     # Silme
+                     for idx in state.get("deleted_rows", []):
+                         rid = df_edit.iloc[idx]['id']
+                         run_query("DELETE FROM transactions WHERE id=?", (rid,))
+                     
+                     if state["edited_rows"] or state["deleted_rows"]:
+                         st.toast("Güncellendi!", icon="🔄")
 
-    # --- LİMİTLER ---
-    elif menu == "📉 Limitler & Analiz":
-        st.title("Bütçe Kontrolü")
+    # --- LİMİTLER (SADECE GİDER) ---
+    elif menu == "📉 Analiz & Limitler":
+        st.title("Bütçe Limitleri")
         
-        # Limit Ayarları
-        with st.expander("⚙️ Limit Ayarları"):
-            res = run_query("SELECT category, limit_amount FROM cat_limits WHERE username = ?", (user,), fetch=True)
-            user_limits = {row[0]: row[1] for row in res} if res else {}
-            
-            with st.form("limit_set"):
+        with st.expander("⚙️ Limit Belirle", expanded=True):
+            with st.form("lim_form"):
                 c1, c2 = st.columns(2)
-                l_cat = c1.selectbox("Kategori", GIDER_KATEGORILERI)
-                l_val = c2.number_input("Limit (TL)", min_value=0.0, step=500.0)
+                # Sadece Gider Kategorileri
+                l_cat = c1.selectbox("Kategori Seç", GIDER_KATEGORILERI)
+                l_val = c2.number_input("Aylık Limit (TL)", step=500.0)
                 if st.form_submit_button("Limiti Kaydet"):
-                    run_query('INSERT OR REPLACE INTO cat_limits (username, category, limit_amount) VALUES (?, ?, ?)', (user, l_cat, l_val))
+                    run_query('INSERT OR REPLACE INTO cat_limits VALUES (?,?,?)', (user, l_cat, l_val))
                     st.success("Limit ayarlandı.")
                     st.rerun()
-        
+
         st.divider()
         
-        # Analiz Barları
+        # Limit Analizi
         st.subheader("Bu Ayın Durumu")
-        if not df.empty:
-            now = datetime.now()
-            df_gider = df[(df['date'].dt.month == now.month) & (df['type']=='Gider')]
-            
-            if not user_limits:
-                st.info("Henüz limit belirlemediniz.")
-            
-            for cat, limit in user_limits.items():
+        res = run_query('SELECT category, limit_amount FROM cat_limits WHERE username=?', (user,), fetch=True)
+        limits = {r[0]:r[1] for r in res}
+        
+        now = datetime.now()
+        df_gider = df[(df['date'].dt.month == now.month) & (df['type']=='Gider')]
+        
+        if limits:
+            for cat, lim in limits.items():
                 spent = df_gider[df_gider['category']==cat]['amount'].sum()
-                pct = (spent / limit) * 100 if limit > 0 else 0
+                pct = (spent/lim)*100 if lim>0 else 0
                 
-                st.write(f"**{cat}**")
-                c_bar, c_txt = st.columns([4, 1])
-                
-                color = "green"
-                if pct > 100: color = "red"
-                elif pct > 80: color = "orange"
-                
-                # Özel HTML Progress Bar (Daha estetik)
-                c_bar.markdown(f"""
-                    <div style="width:100%; background-color: #333; border-radius: 10px; height: 20px;">
-                        <div style="width: {min(pct, 100)}%; background-color: {color}; height: 100%; border-radius: 10px; transition: width 0.5s;"></div>
-                    </div>
-                """, unsafe_allow_html=True)
-                c_txt.caption(f"{spent:,.0f} / {limit:,.0f} TL")
-                if pct > 100: st.caption(f"⚠️ {spent-limit:,.0f} TL Aşıldı!")
-                st.write("") # Boşluk
+                c_txt, c_bar = st.columns([1, 3])
+                with c_txt:
+                    st.write(f"**{cat}**")
+                    st.caption(f"{spent:,.0f} / {lim:,.0f} TL")
+                with c_bar:
+                    color = "red" if pct > 100 else "orange" if pct > 80 else "green"
+                    st.markdown(f"""<div style="width:100%; background:#333; height:10px; border-radius:5px;">
+                                    <div style="width:{min(pct,100)}%; background:{color}; height:100%; border-radius:5px;"></div></div>""", unsafe_allow_html=True)
+                    if pct>100: st.caption("⚠️ LİMİT AŞILDI!")
         else:
-            st.warning("Veri yok.")
+            st.info("Henüz limit belirlemediniz.")
+
+    # --- ABONELİKLER (GERİ GELDİ) ---
+    elif menu == "🔄 Abonelik Takibi":
+        st.title("Abonelik Yönetimi")
+        st.info("Kategorisi 'Abonelik - İnternet/Dijital' olan harcamalar burada listelenir.")
+        
+        df_subs = df[df['category'] == "Abonelik - İnternet/Dijital"].copy()
+        
+        if not df_subs.empty:
+            subs_data = []
+            for _, row in df_subs.iterrows():
+                next_date = sonraki_odeme_bul(row['date'])
+                days_left = (next_date - datetime.now().date()).days
+                status = "✅ Ödendi" if days_left > 20 else "⏳ Yaklaşıyor"
+                if days_left < 3: status = "🚨 Çok Yakın"
+                
+                subs_data.append({
+                    "Hizmet": row['description'] if row['description'] else "İsimsiz",
+                    "Tutar": f"{row['amount']} ₺",
+                    "Sonraki Ödeme": next_date.strftime("%d.%m.%Y"),
+                    "Kalan Gün": f"{days_left} Gün",
+                    "Durum": status
+                })
+            st.dataframe(pd.DataFrame(subs_data), use_container_width=True)
+            
+            total_sub = df_subs['amount'].sum()
+            st.metric("Aylık Sabit Gider", f"{total_sub:,.2f} ₺")
+        else:
+            st.warning("Abonelik bulunamadı. Gider eklerken 'Abonelik - İnternet/Dijital' seçin.")
+
+    # --- GEÇMİŞ RAPORLAR (GERİ GELDİ) ---
+    elif menu == "🗂️ Geçmiş Raporlar":
+        st.title("Geçmiş Dönem Arşivi")
+        
+        if not df.empty:
+            df['Period'] = df['date'].dt.strftime('%Y-%m')
+            periods = sorted(df['Period'].unique(), reverse=True)
+            
+            selected_p = st.selectbox("Dönem Seçin", periods)
+            
+            df_p = df[df['Period'] == selected_p]
+            inc = df_p[df_p['type']=='Gelir']['amount'].sum()
+            exp = df_p[df_p['type']=='Gider']['amount'].sum()
+            
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Gelir", f"{inc:,.2f} ₺")
+            k2.metric("Gider", f"{exp:,.2f} ₺")
+            k3.metric("Net", f"{inc-exp:,.2f} ₺")
+            
+            st.dataframe(df_p.sort_values('date'), use_container_width=True)
+        else:
+            st.info("Veri yok.")
