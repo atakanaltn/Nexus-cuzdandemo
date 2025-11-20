@@ -8,22 +8,19 @@ from dateutil.relativedelta import relativedelta
 
 # --- 1. SİSTEM AYARLARI ---
 st.set_page_config(
-    page_title="ONYX Pro",
+    page_title="ONYX Pro V11",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- 2. CSS TASARIM (ONYX BLACK THEME) ---
+# --- 2. TASARIM (ONYX THEME) ---
 st.markdown("""
     <style>
         .stApp { background-color: #050505; }
         div[data-testid="stMetric"] {
             background: linear-gradient(145deg, #1a1a1a, #000000);
-            border: 1px solid #333;
-            padding: 15px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+            border: 1px solid #333; padding: 15px; border-radius: 12px;
         }
         h1, h2, h3 { color: #E0E0E0 !important; font-family: 'Helvetica Neue', sans-serif; }
         th { background-color: #111 !important; color: #D4AF37 !important; border-bottom: 1px solid #333; }
@@ -32,36 +29,46 @@ st.markdown("""
             width: 100%; background-color: #111; color: #D4AF37; border: 1px solid #444;
         }
         div.stButton > button:hover { border-color: #D4AF37; color: #FFF; }
+        
+        /* Progress Bar Renkleri */
+        .stProgress > div > div > div > div { background-color: #00FFA3; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. VERİTABANI YÖNETİMİ (SQLITE) ---
+# --- 3. VERİTABANI VE KATEGORİLER ---
 DB_FILE = "onyx_database.db"
 
+# KATEGORİ LİSTELERİ
+GIDER_KATEGORILERI = [
+    "Abonelik - İnternet/Dijital", "Gıda - Market", "Gıda - Restoran", 
+    "Konut - Kira", "Fatura - Elektrik/Su", "Fatura - Telefon/Net",
+    "Ulaşım - Yakıt", "Ulaşım - Toplu Taşıma",
+    "Kişisel - Giyim", "Kişisel - Bakım", "Sağlık", "Eğlence", "Eğitim", "Diğer"
+]
+# GELİR KATEGORİLERİ (SADELEŞTİRİLDİ)
+GELIR_KATEGORILERI = ["Maaş / Düzenli", "Ek Gelir / Ticaret", "Yatırım", "Diğer"]
+
 def init_db():
-    """Veritabanı ve tabloları oluşturur"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Kullanıcılar Tablosu
+    # Kullanıcılar
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (username TEXT PRIMARY KEY, password TEXT, join_date TEXT)''')
-    # İşlemler Tablosu
+    # İşlemler
     c.execute('''CREATE TABLE IF NOT EXISTS transactions 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, 
                   date TEXT, type TEXT, category TEXT, amount REAL, description TEXT)''')
-    # Limit Tablosu
+    # Genel Limit
     c.execute('''CREATE TABLE IF NOT EXISTS limits 
                  (username TEXT PRIMARY KEY, monthly_limit REAL)''')
+    # Kategori Bazlı Limitler (YENİ TABLO)
+    c.execute('''CREATE TABLE IF NOT EXISTS cat_limits 
+                 (username TEXT, category TEXT, limit_amount REAL, PRIMARY KEY (username, category))''')
     conn.commit()
     conn.close()
 
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
-
-def check_hashes(password, hashed_text):
-    if make_hashes(password) == hashed_text:
-        return hashed_text
-    return False
 
 def add_user(username, password):
     conn = sqlite3.connect(DB_FILE)
@@ -74,7 +81,7 @@ def add_user(username, password):
         return True
     except sqlite3.IntegrityError:
         conn.close()
-        return False # Kullanıcı adı zaten var
+        return False
 
 def login_user(username, password):
     conn = sqlite3.connect(DB_FILE)
@@ -84,7 +91,6 @@ def login_user(username, password):
     conn.close()
     return data
 
-# --- KULLANICI FONKSİYONLARI ---
 def get_user_data(username):
     conn = sqlite3.connect(DB_FILE)
     df = pd.read_sql_query("SELECT * FROM transactions WHERE username = ?", conn, params=(username,))
@@ -108,7 +114,8 @@ def delete_transaction(transaction_id):
     conn.commit()
     conn.close()
 
-def get_limit(username):
+# --- LİMİT FONKSİYONLARI ---
+def get_global_limit(username):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('SELECT monthly_limit FROM limits WHERE username = ?', (username,))
@@ -116,14 +123,29 @@ def get_limit(username):
     conn.close()
     return data[0] if data else 20000
 
-def set_limit(username, limit):
+def set_global_limit(username, limit):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('INSERT OR REPLACE INTO limits (username, monthly_limit) VALUES (?, ?)', (username, limit))
     conn.commit()
     conn.close()
 
-# --- ADMIN FONKSİYONLARI ---
+def set_cat_limit(username, category, limit):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('INSERT OR REPLACE INTO cat_limits (username, category, limit_amount) VALUES (?, ?, ?)', 
+              (username, category, limit))
+    conn.commit()
+    conn.close()
+
+def get_cat_limits_dict(username):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT category, limit_amount FROM cat_limits WHERE username = ?', (username,))
+    data = c.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in data}
+
 def get_all_users():
     conn = sqlite3.connect(DB_FILE)
     df = pd.read_sql_query("SELECT username, join_date FROM users", conn)
@@ -133,176 +155,210 @@ def get_all_users():
 # --- BAŞLANGIÇ ---
 init_db()
 
-# Kategoriler
-GIDER_KATEGORILERI = ["Abonelik - İnternet/Dijital", "Gıda - Market", "Gıda - Restoran", "Konut - Kira", "Fatura", "Ulaşım", "Kişisel", "Eğlence", "Diğer"]
-GELIR_KATEGORILERI = ["Maaş", "Ek Gelir", "Yatırım", "Diğer"]
-
-# --- SİSTEM AKIŞI ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
     st.session_state['username'] = ''
 
-# 1. GİRİŞ EKRANI (LOGIN / SIGNUP)
+# ==========================================
+# 1. GİRİŞ EKRANI
+# ==========================================
 if not st.session_state['logged_in']:
     st.title("💎 ONYX Giriş")
     tab1, tab2 = st.tabs(["Giriş Yap", "Kayıt Ol"])
-    
     with tab1:
-        with st.form("login_form"):
-            username = st.text_input("Kullanıcı Adı")
-            password = st.text_input("Şifre", type="password")
-            if st.form_submit_button("Giriş Yap"):
-                # ADMIN GİRİŞİ
-                if username == "admin" and password == "12345":
+        with st.form("login"):
+            u = st.text_input("Kullanıcı Adı")
+            p = st.text_input("Şifre", type="password")
+            if st.form_submit_button("Giriş"):
+                if u == "admin" and p == "12345":
                     st.session_state['logged_in'] = True
                     st.session_state['username'] = "admin"
                     st.rerun()
-                # NORMAL GİRİŞ
-                elif login_user(username, password):
+                elif login_user(u, p):
                     st.session_state['logged_in'] = True
-                    st.session_state['username'] = username
-                    st.success("Giriş Başarılı!")
+                    st.session_state['username'] = u
+                    st.success("Başarılı")
                     st.rerun()
                 else:
-                    st.error("Hatalı Kullanıcı Adı veya Şifre")
-    
+                    st.error("Hatalı!")
     with tab2:
-        with st.form("signup_form"):
-            new_user = st.text_input("Yeni Kullanıcı Adı")
-            new_pass = st.text_input("Yeni Şifre", type="password")
+        with st.form("signup"):
+            nu = st.text_input("Kullanıcı Adı")
+            np = st.text_input("Şifre", type="password")
             if st.form_submit_button("Kayıt Ol"):
-                if add_user(new_user, new_pass):
-                    st.success("Hesap oluşturuldu! Giriş yap sekmesine gidin.")
+                if add_user(nu, np):
+                    st.success("Kayıt başarılı! Giriş yapın.")
                 else:
-                    st.warning("Bu kullanıcı adı zaten alınmış.")
+                    st.warning("Kullanıcı adı dolu.")
 
-# 2. YÖNETİCİ PANELİ (ADMIN)
+# ==========================================
+# 2. YÖNETİCİ PANELİ
+# ==========================================
 elif st.session_state['username'] == "admin":
-    st.sidebar.title("👑 ADMIN PANEL")
-    if st.sidebar.button("Çıkış Yap"):
+    st.sidebar.title("👑 ADMIN")
+    if st.sidebar.button("Çıkış"):
         st.session_state['logged_in'] = False
         st.rerun()
     
-    st.title("Yönetim Paneli")
-    
-    # İstatistikler
+    st.title("Yönetici Paneli")
     users_df = get_all_users()
-    total_users = len(users_df) - 1 # Admin hariç
+    st.metric("Toplam Üye", len(users_df))
     
-    c1, c2 = st.columns(2)
-    c1.metric("Toplam Üye", total_users)
-    c2.metric("Sistem Saati", datetime.now().strftime("%H:%M"))
-    
-    st.subheader("Üye Listesi")
-    st.dataframe(users_df)
-    
-    st.info("Yönetici olarak kullanıcı verilerine müdahale edemezsiniz (Gizlilik İlkesi). Sadece genel istatistikleri görebilirsiniz.")
+    user_list = users_df[users_df['username'] != 'admin']['username'].tolist()
+    if user_list:
+        target = st.selectbox("Kullanıcı İncele:", user_list)
+        if target:
+            df = get_user_data(target)
+            if not df.empty:
+                gelir = df[df['type']=='Gelir']['amount'].sum()
+                gider = df[df['type']=='Gider']['amount'].sum()
+                st.write(f"**{target}** - Net Varlık: {gelir-gider:,.2f} ₺")
+                st.dataframe(df)
+    else:
+        st.warning("Üye yok.")
 
-# 3. KULLANICI ARAYÜZÜ (USER DASHBOARD)
+# ==========================================
+# 3. KULLANICI ARAYÜZÜ
+# ==========================================
 else:
     curr_user = st.session_state['username']
-    
-    # Verileri Çek
     df = get_user_data(curr_user)
-    limit = get_limit(curr_user)
     
-    # YAN MENÜ
     with st.sidebar:
-        st.title(f"👤 {curr_user.upper()}")
-        st.caption("ONYX Pro Member")
+        st.title(f"👤 {curr_user}")
         st.markdown("---")
-        menu = st.radio("MENÜ", ["📊 Dashboard", "📝 İşlem Yönetimi", "📉 Limit & Analiz", "🔄 Abonelikler"])
+        menu = st.radio("MENÜ", ["📊 Dashboard", "📝 İşlem Ekle", "📉 Limit & Analiz", "🔄 Abonelikler"])
         st.markdown("---")
-        if st.button("Çıkış Yap"):
+        if st.button("Çıkış"):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    # --- SAYFA: DASHBOARD ---
+    # --- DASHBOARD ---
     if menu == "📊 Dashboard":
         st.title("Finansal Özet")
         if df.empty:
-            st.info("Hoşgeldiniz! İşlem Yönetimi menüsünden ilk kaydınızı oluşturun.")
+            st.info("Henüz veri yok.")
         else:
             simdi = datetime.now()
-            df_bu_ay = df[(df["date"].dt.month == simdi.month) & (df["date"].dt.year == simdi.year)]
-            
-            gelir = df_bu_ay[df_bu_ay["type"]=="Gelir"]["amount"].sum()
-            gider = df_bu_ay[df_bu_ay["type"]=="Gider"]["amount"].sum()
-            toplam_kasa = df[df["type"]=="Gelir"]["amount"].sum() - df[df["type"]=="Gider"]["amount"].sum()
+            df_ay = df[(df["date"].dt.month == simdi.month) & (df["date"].dt.year == simdi.year)]
+            gelir = df_ay[df_ay["type"]=="Gelir"]["amount"].sum()
+            gider = df_ay[df_ay["type"]=="Gider"]["amount"].sum()
+            net = gelir - gider
+            total_kasa = df[df["type"]=="Gelir"]["amount"].sum() - df[df["type"]=="Gider"]["amount"].sum()
             
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("💎 TOPLAM KASA", f"{toplam_kasa:,.2f} ₺")
+            c1.metric("💎 TOPLAM KASA", f"{total_kasa:,.2f} ₺")
             c2.metric("📥 Bu Ay Gelir", f"{gelir:,.2f} ₺")
             c3.metric("📤 Bu Ay Gider", f"{gider:,.2f} ₺")
-            c4.metric("Net Durum", f"{gelir-gider:,.2f} ₺", delta_color="normal" if (gelir-gider)>=0 else "inverse")
+            c4.metric("Net", f"{net:,.2f} ₺", delta_color="normal" if net>=0 else "inverse")
             
-            st.markdown("---")
-            if not df_bu_ay.empty:
-                fig = px.area(df_bu_ay, x="date", y="amount", color="type", 
-                              color_discrete_map={"Gelir": "#00FFA3", "Gider": "#FF4B4B"}, template="plotly_dark")
-                st.plotly_chart(fig, use_container_width=True)
+            st.divider()
+            
+            # Pasta Grafik (Gider Dağılımı)
+            c_graf1, c_graf2 = st.columns(2)
+            with c_graf1:
+                if not df_ay[df_ay["type"]=="Gider"].empty:
+                    st.subheader("Harcama Dağılımı")
+                    fig = px.pie(df_ay[df_ay["type"]=="Gider"], values="amount", names="category", hole=0.5, template="plotly_dark")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Bu ay gider yok.")
+            with c_graf2:
+                 if not df_ay.empty:
+                    st.subheader("Günlük Akış")
+                    fig2 = px.bar(df_ay, x="date", y="amount", color="type", color_discrete_map={"Gelir":"#00FFA3", "Gider":"#FF4B4B"}, template="plotly_dark")
+                    st.plotly_chart(fig2, use_container_width=True)
 
-    # --- SAYFA: İŞLEM YÖNETİMİ ---
-    elif menu == "📝 İşlem Yönetimi":
+    # --- İŞLEM EKLE ---
+    elif menu == "📝 İşlem Ekle":
         st.title("İşlem Ekle")
-        with st.form("add_tr"):
+        with st.form("add"):
             c1, c2, c3 = st.columns(3)
-            t_type = c1.selectbox("Tür", ["Gider", "Gelir"])
-            t_date = c2.date_input("Tarih", datetime.now())
-            t_amount = c3.number_input("Tutar", min_value=0.0)
-            t_cat = st.selectbox("Kategori", GIDER_KATEGORILERI if t_type=="Gider" else GELIR_KATEGORILERI)
-            t_desc = st.text_input("Açıklama")
+            typ = c1.selectbox("Tür", ["Gider", "Gelir"])
+            dat = c2.date_input("Tarih", datetime.now())
+            amt = c3.number_input("Tutar", min_value=0.0, step=50.0)
+            # KATEGORİLER BURADA AYARLANDI
+            cat = st.selectbox("Kategori", GIDER_KATEGORILERI if typ=="Gider" else GELIR_KATEGORILERI)
+            desc = st.text_input("Açıklama")
             if st.form_submit_button("Kaydet"):
-                add_transaction(curr_user, t_date, t_type, t_cat, t_amount, t_desc)
+                add_transaction(curr_user, dat, typ, cat, amt, desc)
                 st.success("Kaydedildi")
                 st.rerun()
         
-        st.divider()
-        st.subheader("Geçmiş Kayıtlar")
+        st.subheader("Geçmiş")
         if not df.empty:
-            # Basit Silme Arayüzü
-            for index, row in df.sort_values("date", ascending=False).iterrows():
-                c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 3, 1])
-                c1.write(row['date'].strftime('%d.%m.%Y'))
-                c2.write(row['type'])
-                c3.write(f"{row['amount']:,.2f} ₺")
-                c4.write(row['description'])
-                if c5.button("Sil", key=row['id']):
+            st.dataframe(df.sort_values("date", ascending=False), use_container_width=True)
+            # Silme özelliği
+            for idx, row in df.sort_values("date", ascending=False).head(5).iterrows():
+                c_a, c_b = st.columns([4, 1])
+                c_a.text(f"{row['date'].strftime('%d.%m')} | {row['category']} | {row['amount']} TL")
+                if c_b.button("Sil", key=f"del_{row['id']}"):
                     delete_transaction(row['id'])
                     st.rerun()
 
-    # --- SAYFA: LİMİT ---
+    # --- LİMİT & ANALİZ (YENİ ALTYAPI) ---
     elif menu == "📉 Limit & Analiz":
-        st.title("Bütçe Limiti")
-        curr_limit = get_limit(curr_user)
+        st.title("Bütçe Limitleri")
         
-        new_limit = st.number_input("Aylık Limit (TL)", value=float(curr_limit))
-        if st.button("Güncelle"):
-            set_limit(curr_user, new_limit)
-            st.success("Limit güncellendi!")
-            st.rerun()
-            
-        st.divider()
-        # Analiz
-        simdi = datetime.now()
-        bu_ay_gider = 0
-        if not df.empty:
-             bu_ay_gider = df[(df["date"].dt.month == simdi.month) & (df["type"]=="Gider")]["amount"].sum()
-             
-        yuzde = (bu_ay_gider / curr_limit) * 100 if curr_limit > 0 else 0
-        st.write(f"Harcama: {bu_ay_gider:,.2f} / Limit: {curr_limit:,.2f}")
-        st.progress(min(yuzde/100, 1.0))
-        if yuzde >= 100: st.error("LİMİT AŞILDI!")
+        # 1. Kategori Limit Ayarlama
+        with st.expander("🛠️ Kategori Limiti Belirle/Güncelle", expanded=False):
+            with st.form("cat_limit_form"):
+                c_l1, c_l2 = st.columns(2)
+                secilen_kat = c_l1.selectbox("Kategori Seç", GIDER_KATEGORILERI)
+                secilen_limit = c_l2.number_input("Limit (TL)", min_value=0.0, step=500.0)
+                if st.form_submit_button("Limiti Kaydet"):
+                    set_cat_limit(curr_user, secilen_kat, secilen_limit)
+                    st.success(f"{secilen_kat} için limit {secilen_limit} TL olarak ayarlandı.")
+                    st.rerun()
 
-    # --- SAYFA: ABONELİKLER ---
-    elif menu == "🔄 Abonelikler":
-        st.title("Abonelik Takibi")
-        st.info("'Abonelik - İnternet/Dijital' kategorisindeki harcamalar burada görünür.")
+        st.divider()
         
+        # 2. Limit Analizi (Progress Bars)
+        st.subheader("Bu Ayın Limit Durumu")
+        
+        simdi = datetime.now()
+        if not df.empty:
+            # Bu ayın giderlerini çek
+            df_gider = df[(df["date"].dt.month == simdi.month) & 
+                          (df["date"].dt.year == simdi.year) & 
+                          (df["type"] == "Gider")]
+            
+            # Kullanıcının tüm limitlerini çek
+            user_limits = get_cat_limits_dict(curr_user)
+            
+            if not user_limits:
+                st.info("Henüz kategori bazlı limit belirlemediniz. Yukarıdaki panelden ekleyin.")
+            
+            # Her limit için bar oluştur
+            for kat, limit in user_limits.items():
+                # O kategorideki harcamayı bul
+                harcanan = df_gider[df_gider["category"] == kat]["amount"].sum()
+                
+                if limit > 0:
+                    yuzde = (harcanan / limit) * 100
+                    bar_val = min(yuzde / 100, 1.0)
+                    
+                    col_bar1, col_bar2 = st.columns([3, 1])
+                    with col_bar1:
+                        st.write(f"**{kat}**")
+                        # Renkli Bar Mantığı
+                        if yuzde >= 100:
+                            st.progress(bar_val)
+                            st.error(f"⚠️ LİMİT AŞILDI! ({harcanan:,.0f} / {limit:,.0f} TL)")
+                        elif yuzde >= 80:
+                            st.progress(bar_val)
+                            st.warning(f"Dikkat! ({harcanan:,.0f} / {limit:,.0f} TL)")
+                        else:
+                            st.progress(bar_val)
+                            st.caption(f"Güvenli: {harcanan:,.0f} / {limit:,.0f} TL")
+        else:
+            st.info("Bu ay harcama verisi yok.")
+
+    # --- ABONELİKLER ---
+    elif menu == "🔄 Abonelikler":
+        st.title("Abonelikler")
         if not df.empty:
             subs = df[df["category"] == "Abonelik - İnternet/Dijital"]
-            if not subs.empty:
-                for _, row in subs.iterrows():
-                    st.write(f"**{row['description']}** - {row['amount']} TL (Son İşlem: {row['date'].strftime('%d.%m.%Y')})")
-            else:
-                st.warning("Abonelik kaydı yok.")
+            st.dataframe(subs)
+        else:
+            st.warning("Yok.")
