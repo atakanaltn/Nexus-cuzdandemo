@@ -8,13 +8,13 @@ from dateutil.relativedelta import relativedelta
 
 # --- 1. SİSTEM AYARLARI ---
 st.set_page_config(
-    page_title="ONYX V14 Admin",
+    page_title="ONYX V14.1",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- 2. TASARIM (ONYX DARK THEME) ---
+# --- 2. TASARIM ---
 st.markdown("""
     <style>
         .stApp { 
@@ -36,7 +36,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. VERİTABANI YÖNETİMİ ---
+# --- 3. VERİTABANI ---
 DB_FILE = "onyx_v14.db"
 
 def run_query(query, params=(), fetch=False):
@@ -58,16 +58,9 @@ def init_db():
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
-# --- KATEGORİLER ---
-GIDER_KATEGORILERI = [
-    "Abonelik - İnternet/Dijital", "Gıda - Market", "Gıda - Restoran", 
-    "Konut - Kira", "Konut - Aidat", "Fatura - Elektrik/Su/Gaz", "Fatura - Telefon",
-    "Ulaşım - Yakıt", "Ulaşım - Toplu Taşıma", "Kişisel - Giyim", "Kişisel - Bakım", 
-    "Sağlık", "Eğlence", "Eğitim", "Borç Ödemesi", "Diğer Gider"
-]
-GELIR_KATEGORILERI = ["Maaş", "Ek Gelir", "Yatırım", "Borç Alacağı", "Diğer Gelir"]
+GIDER_KATEGORILERI = ["Abonelik - İnternet/Dijital", "Gıda - Market", "Gıda - Restoran", "Konut - Kira", "Fatura", "Ulaşım", "Kişisel", "Sağlık", "Eğlence", "Eğitim", "Diğer"]
+GELIR_KATEGORILERI = ["Maaş", "Ek Gelir", "Yatırım", "Diğer"]
 
-# --- YARDIMCI FONKSİYONLAR ---
 def get_user_data(username):
     try:
         conn = sqlite3.connect(DB_FILE)
@@ -94,20 +87,16 @@ def admin_delete_user(username):
 
 def sonraki_odeme_bul(baslangic_tarihi):
     bugun = datetime.now().date()
-    if isinstance(baslangic_tarihi, str):
-        odeme_tarihi = datetime.strptime(baslangic_tarihi, "%Y-%m-%d").date()
-    else:
-        odeme_tarihi = baslangic_tarihi.date()
-    while odeme_tarihi < bugun:
-        odeme_tarihi += relativedelta(months=1)
+    if isinstance(baslangic_tarihi, str): odeme_tarihi = datetime.strptime(baslangic_tarihi, "%Y-%m-%d").date()
+    else: odeme_tarihi = baslangic_tarihi.date()
+    while odeme_tarihi < bugun: odeme_tarihi += relativedelta(months=1)
     return odeme_tarihi
 
-# --- BAŞLANGIÇ ---
 init_db()
 if 'logged_in' not in st.session_state: st.session_state.update({'logged_in': False, 'username': ''})
 
 # ==========================================
-# 1. GİRİŞ EKRANI
+# GİRİŞ
 # ==========================================
 if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
@@ -132,90 +121,59 @@ if not st.session_state['logged_in']:
                 np = st.text_input("Şifre", type="password")
                 if st.form_submit_button("Kayıt Ol"):
                     if run_query('INSERT INTO users VALUES (?,?,?)', (nu, make_hashes(np), datetime.now().strftime("%Y-%m-%d"))):
-                        st.success("Kayıt başarılı! Giriş yapabilirsiniz.")
-                    else: st.warning("Bu kullanıcı adı zaten var.")
+                        st.success("Başarılı! Giriş yapın.")
+                    else: st.warning("Kullanıcı adı dolu.")
 
 # ==========================================
-# 2. YÖNETİCİ PANELİ (GELİŞMİŞ)
+# ADMIN
 # ==========================================
 elif st.session_state['username'] == "admin":
-    st.sidebar.title("👑 ADMIN PANEL")
-    st.sidebar.info("Tam Yetkili Erişim")
-    if st.sidebar.button("Çıkış Yap"): 
+    st.sidebar.title("👑 ADMIN")
+    if st.sidebar.button("Çıkış"): 
         st.session_state['logged_in']=False
         st.rerun()
     
-    # Admin Menüsü
-    admin_menu = st.sidebar.radio("Yönetim", ["📈 Genel İstatistikler", "👥 Kullanıcı Yönetimi (Şifre/Sil)", "👁️ Veri Denetimi"])
+    admin_menu = st.sidebar.radio("Yönetim", ["📈 Özet", "👥 Kullanıcılar", "👁️ Veri İncele"])
     
-    if admin_menu == "📈 Genel İstatistikler":
+    if admin_menu == "📈 Özet":
         st.title("Sistem Özeti")
-        users_df = get_all_users_df()
-        total_users = len(users_df)
+        users = get_all_users_df()
+        st.metric("Toplam Üye", len(users))
+        st.dataframe(users, use_container_width=True)
         
-        # Sistemdeki Toplam Para Hareketi
-        conn = sqlite3.connect(DB_FILE)
-        total_tx_vol = pd.read_sql_query("SELECT SUM(amount) FROM transactions", conn).iloc[0,0]
-        conn.close()
-        if total_tx_vol is None: total_tx_vol = 0
-        
-        c1, c2 = st.columns(2)
-        c1.metric("Toplam Üye", total_users)
-        c2.metric("Sistemdeki İşlem Hacmi", f"{total_tx_vol:,.2f} ₺")
-        
-        st.subheader("Kayıtlı Üyeler")
-        st.dataframe(users_df, use_container_width=True)
-
-    elif admin_menu == "👥 Kullanıcı Yönetimi (Şifre/Sil)":
+    elif admin_menu == "👥 Kullanıcılar":
         st.title("Kullanıcı İşlemleri")
-        users_df = get_all_users_df()
-        user_list = users_df[users_df['username'] != 'admin']['username'].tolist()
-        
-        target_user = st.selectbox("İşlem Yapılacak Kullanıcı:", user_list)
-        
-        if target_user:
-            st.divider()
-            c_pass, c_del = st.columns(2)
-            
-            # Şifre Sıfırlama
-            with c_pass:
-                st.subheader("🔒 Şifre Değiştir")
-                st.info(f"**{target_user}** için yeni şifre belirle.")
-                new_admin_pass = st.text_input("Yeni Şifre", key="new_pass")
-                if st.button("Şifreyi Güncelle"):
-                    if new_admin_pass:
-                        admin_update_password(target_user, new_admin_pass)
-                        st.success(f"{target_user} kullanıcısının şifresi değiştirildi.")
-                    else:
-                        st.warning("Şifre boş olamaz.")
-            
-            # Kullanıcı Silme
-            with c_del:
-                st.subheader("🚨 Kullanıcıyı Sil")
-                st.error("Bu işlem geri alınamaz! Tüm verileri silinir.")
+        users = get_all_users_df()
+        targets = users[users['username']!='admin']['username'].tolist()
+        sel = st.selectbox("Kullanıcı", targets)
+        if sel:
+            c1, c2 = st.columns(2)
+            with c1:
+                np = st.text_input("Yeni Şifre")
+                if st.button("Şifre Değiştir"):
+                    admin_update_password(sel, np)
+                    st.success("Değiştirildi")
+            with c2:
+                st.error("Dikkat!")
                 if st.button("KULLANICIYI SİL"):
-                    admin_delete_user(target_user)
-                    st.success(f"{target_user} sistemden silindi.")
+                    admin_delete_user(sel)
                     st.rerun()
-
-    elif admin_menu == "👁️ Veri Denetimi":
-        st.title("Kullanıcı Verilerini İncele")
-        users_df = get_all_users_df()
-        user_list = users_df[users_df['username'] != 'admin']['username'].tolist()
-        target_user = st.selectbox("Kullanıcı Seç:", user_list)
-        
-        if target_user:
-            df = get_user_data(target_user)
-            if not df.empty:
-                gelir = df[df['type']=='Gelir']['amount'].sum()
-                gider = df[df['type']=='Gider']['amount'].sum()
-                st.metric(f"{target_user} Net Varlık", f"{gelir-gider:,.2f} ₺")
-                st.dataframe(df.sort_values('date', ascending=False), use_container_width=True)
-            else:
-                st.info("Bu kullanıcının verisi yok.")
+                    
+    elif admin_menu == "👁️ Veri İncele":
+        st.title("Veri Denetimi")
+        users = get_all_users_df()
+        targets = users[users['username']!='admin']['username'].tolist()
+        sel = st.selectbox("Kullanıcı", targets)
+        if sel:
+            d = get_user_data(sel)
+            if not d.empty:
+                inc = d[d['type']=='Gelir']['amount'].sum()
+                exp = d[d['type']=='Gider']['amount'].sum()
+                st.metric("Net Bakiye", f"{inc-exp:,.2f} ₺")
+                st.dataframe(d)
 
 # ==========================================
-# 3. KULLANICI PANELİ (BUG FIXED DASHBOARD)
+# KULLANICI
 # ==========================================
 else:
     user = st.session_state['username']
@@ -225,172 +183,143 @@ else:
         st.title(f"👤 {user.upper()}")
         st.caption("Premium Üye")
         st.markdown("---")
-        menu = st.radio("MENÜ", [
-            "📊 Dashboard", 
-            "📝 İşlem Yönetimi", 
-            "📉 Analiz & Limitler", 
-            "🔄 Abonelik Takibi", 
-            "🗂️ Geçmiş Raporlar"
-        ])
+        menu = st.radio("MENÜ", ["📊 Dashboard", "📝 İşlem Yönetimi", "📉 Limitler", "🔄 Abonelikler", "🗂️ Raporlar"])
         st.markdown("---")
+        # YENİ EKLENEN BUTON
+        if st.button("🔄 Verileri Yenile"):
+            st.rerun()
         if st.button("Çıkış"):
             st.session_state['logged_in']=False
             st.rerun()
 
-    # --- DASHBOARD ---
     if menu == "📊 Dashboard":
         st.title("Finansal Özet")
         
-        # BUG FIX: Eğer df boşsa veya o ay veri yoksa çökmemesi için kontroller
         now = datetime.now()
-        
-        total_kasa = 0.0
-        mo_inc = 0.0
-        mo_exp = 0.0
-        mo_net = 0.0
-        df_mo = pd.DataFrame() # Boş dataframe başlat
+        total_kasa, mo_inc, mo_exp, mo_net = 0.0, 0.0, 0.0, 0.0
+        df_mo = pd.DataFrame()
 
         if not df.empty:
-            # Genel Toplam
+            # Genel Toplam (Tarihten bağımsız)
             total_inc = df[df['type']=='Gelir']['amount'].sum()
             total_exp = df[df['type']=='Gider']['amount'].sum()
             total_kasa = total_inc - total_exp
             
-            # Bu Ay
+            # Bu Ay Filtresi (Dashboard sorunu buradaydı, şimdi daha sağlam)
             df_mo = df[(df['date'].dt.month == now.month) & (df['date'].dt.year == now.year)]
+            
             if not df_mo.empty:
                 mo_inc = df_mo[df_mo['type']=='Gelir']['amount'].sum()
                 mo_exp = df_mo[df_mo['type']=='Gider']['amount'].sum()
                 mo_net = mo_inc - mo_exp
 
+        # Kartlar
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("💎 TOPLAM KASA", f"{total_kasa:,.2f} ₺")
-        c2.metric("📥 Bu Ay Gelir", f"{mo_inc:,.2f} ₺")
-        c3.metric("📤 Bu Ay Gider", f"{mo_exp:,.2f} ₺")
-        c4.metric("Net Durum", f"{mo_net:,.2f} ₺", delta_color="normal" if mo_net>=0 else "inverse")
+        c1.metric("💎 GENEL TOPLAM", f"{total_kasa:,.2f} ₺", help="Tüm zamanların toplam bakiyesi")
+        c2.metric(f"📥 Gelir ({now.strftime('%B')})", f"{mo_inc:,.2f} ₺", help="Sadece bu ay")
+        c3.metric(f"📤 Gider ({now.strftime('%B')})", f"{mo_exp:,.2f} ₺", help="Sadece bu ay")
+        c4.metric("Aylık Net", f"{mo_net:,.2f} ₺", delta_color="normal" if mo_net>=0 else "inverse")
         
         st.divider()
         
-        col_g1, col_g2 = st.columns([2,1])
-        with col_g1:
+        c_g1, c_g2 = st.columns([2,1])
+        with c_g1:
             if not df_mo.empty:
-                st.subheader("Nakit Akışı")
-                fig = px.area(df_mo, x="date", y="amount", color="type", 
-                              color_discrete_map={"Gelir": "#00FFA3", "Gider": "#FF4B4B"}, template="plotly_dark")
+                fig = px.area(df_mo, x="date", y="amount", color="type", color_discrete_map={"Gelir": "#00FFA3", "Gider": "#FF4B4B"}, template="plotly_dark")
                 st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Bu ay grafik için henüz veri yok.")
+            else: st.info("Bu ay grafik verisi yok. (Tarih seçiminizi kontrol edin)")
                 
-        with col_g2:
+        with c_g2:
              if not df_mo.empty and not df_mo[df_mo['type']=='Gider'].empty:
-                st.subheader("Harcama Dağılımı")
                 fig2 = px.pie(df_mo[df_mo['type']=='Gider'], values='amount', names='category', hole=0.5, template="plotly_dark")
                 st.plotly_chart(fig2, use_container_width=True)
 
-    # --- İŞLEM YÖNETİMİ ---
     elif menu == "📝 İşlem Yönetimi":
         st.title("İşlem Merkezi")
-        tab_gider, tab_gelir, tab_liste = st.tabs(["🔴 Gider Ekle", "🟢 Gelir Ekle", "📋 Kayıt Defteri"])
+        tab_g, tab_gl, tab_l = st.tabs(["🔴 Gider Ekle", "🟢 Gelir Ekle", "📋 Kayıt Defteri"])
         
-        with tab_gider:
-            with st.form("gider_form", clear_on_submit=True):
-                c1, c2, c3, c4 = st.columns([1, 1, 1.5, 2])
-                d_date = c1.date_input("Tarih", datetime.now())
-                d_amt = c2.number_input("Tutar", min_value=0.0, step=50.0)
-                d_cat = c3.selectbox("Kategori", GIDER_KATEGORILERI)
-                d_desc = c4.text_input("Açıklama")
-                if st.form_submit_button("Gider Kaydet"):
-                    run_query('INSERT INTO transactions(username, date, type, category, amount, description) VALUES (?,?,?,?,?,?)', (user, d_date, "Gider", d_cat, d_amt, d_desc))
-                    st.success("Kaydedildi")
-                    st.rerun()
-
-        with tab_gelir:
-            with st.form("gelir_form", clear_on_submit=True):
-                c1, c2, c3, c4 = st.columns([1, 1, 1.5, 2])
-                g_date = c1.date_input("Tarih", datetime.now(), key="g_date")
-                g_amt = c2.number_input("Tutar", min_value=0.0, step=50.0, key="g_amt")
-                g_cat = c3.selectbox("Kategori", GELIR_KATEGORILERI, key="g_cat")
-                g_desc = c4.text_input("Açıklama", key="g_desc")
-                if st.form_submit_button("Gelir Kaydet"):
-                    run_query('INSERT INTO transactions(username, date, type, category, amount, description) VALUES (?,?,?,?,?,?)', (user, g_date, "Gelir", g_cat, g_amt, g_desc))
-                    st.success("Kaydedildi")
-                    st.rerun()
-
-        with tab_liste:
-            st.subheader("Tüm Kayıtlar")
-            if not df.empty:
-                df_edit = df[['id', 'date', 'type', 'category', 'amount', 'description']].sort_values('date', ascending=False)
-                changes = st.data_editor(df_edit, column_config={"id":None, "type":st.column_config.TextColumn(disabled=True), "date": st.column_config.DateColumn("Tarih", format="DD.MM.YYYY")}, num_rows="dynamic", use_container_width=True, key="main_editor")
-                
-                if st.session_state.get("main_editor"):
-                     state = st.session_state["main_editor"]
-                     for idx, row in state.get("edited_rows", {}).items():
-                         rid = df_edit.iloc[idx]['id']
-                         for k, v in row.items():
-                             if k=='date': v=pd.to_datetime(v).strftime('%Y-%m-%d')
-                             run_query(f"UPDATE transactions SET {k}=? WHERE id=?", (v, rid))
-                     for idx in state.get("deleted_rows", []):
-                         rid = df_edit.iloc[idx]['id']
-                         run_query("DELETE FROM transactions WHERE id=?", (rid,))
-                     if state["edited_rows"] or state["deleted_rows"]: st.toast("Güncellendi!");
-
-    # --- LİMİTLER ---
-    elif menu == "📉 Analiz & Limitler":
-        st.title("Bütçe Limitleri")
-        with st.expander("⚙️ Limit Belirle", expanded=True):
-            with st.form("lim_form"):
-                c1, c2 = st.columns(2)
-                l_cat = c1.selectbox("Kategori", GIDER_KATEGORILERI)
-                l_val = c2.number_input("Limit (TL)", step=500.0)
+        with tab_g:
+            with st.form("gider"):
+                c1,c2,c3,c4 = st.columns([1,1,1.5,2])
+                dd = c1.date_input("Tarih", datetime.now())
+                da = c2.number_input("Tutar", min_value=0.0, step=50.0)
+                dc = c3.selectbox("Kategori", GIDER_KATEGORILERI)
+                de = c4.text_input("Açıklama")
                 if st.form_submit_button("Kaydet"):
-                    run_query('INSERT OR REPLACE INTO cat_limits VALUES (?,?,?)', (user, l_cat, l_val))
-                    st.success("Ayarlandı.")
-                    st.rerun()
+                    run_query('INSERT INTO transactions(username, date, type, category, amount, description) VALUES (?,?,?,?,?,?)', (user, dd, "Gider", dc, da, de))
+                    st.success("Tamam"); st.rerun()
+        with tab_gl:
+            with st.form("gelir"):
+                c1,c2,c3,c4 = st.columns([1,1,1.5,2])
+                gd = c1.date_input("Tarih", datetime.now(), key="gd")
+                ga = c2.number_input("Tutar", min_value=0.0, step=50.0, key="ga")
+                gc = c3.selectbox("Kategori", GELIR_KATEGORILERI, key="gc")
+                ge = c4.text_input("Açıklama", key="ge")
+                if st.form_submit_button("Kaydet"):
+                    run_query('INSERT INTO transactions(username, date, type, category, amount, description) VALUES (?,?,?,?,?,?)', (user, gd, "Gelir", gc, ga, ge))
+                    st.success("Tamam"); st.rerun()
+        with tab_l:
+            if not df.empty:
+                df_edit = df[['id','date','type','category','amount','description']].sort_values('date', ascending=False)
+                ch = st.data_editor(df_edit, column_config={"id":None, "date":st.column_config.DateColumn("Tarih", format="DD.MM.YYYY")}, num_rows="dynamic", use_container_width=True, key="edit")
+                if st.session_state.get("edit"):
+                    s = st.session_state["edit"]
+                    if s["edited_rows"] or s["deleted_rows"]:
+                        # Basit update/delete mantığı (önceki kodlardaki gibi)
+                        for i, r in s["edited_rows"].items():
+                            rid = df_edit.iloc[i]['id']
+                            for k,v in r.items():
+                                if k=='date': v=pd.to_datetime(v).strftime('%Y-%m-%d')
+                                run_query(f"UPDATE transactions SET {k}=? WHERE id=?", (v, rid))
+                        for i in s["deleted_rows"]:
+                            rid = df_edit.iloc[i]['id']
+                            run_query("DELETE FROM transactions WHERE id=?", (rid,))
+                        st.toast("Güncellendi")
+
+    elif menu == "📉 Limitler":
+        st.title("Limitler")
+        with st.expander("Limit Ayarla"):
+            with st.form("lim"):
+                lc = st.selectbox("Kategori", GIDER_KATEGORILERI)
+                lv = st.number_input("Limit", step=500.0)
+                if st.form_submit_button("Kaydet"):
+                    run_query('INSERT OR REPLACE INTO cat_limits VALUES (?,?,?)', (user, lc, lv))
+                    st.success("OK"); st.rerun()
         st.divider()
-        st.subheader("Bu Ayın Durumu")
         res = run_query('SELECT category, limit_amount FROM cat_limits WHERE username=?', (user,), fetch=True)
-        limits = {r[0]:r[1] for r in res}
+        lims = {r[0]:r[1] for r in res}
         now = datetime.now()
-        df_gider = pd.DataFrame()
-        if not df.empty: df_gider = df[(df['date'].dt.month == now.month) & (df['type']=='Gider')]
-        
-        if limits:
-            for cat, lim in limits.items():
-                spent = 0
-                if not df_gider.empty: spent = df_gider[df_gider['category']==cat]['amount'].sum()
-                pct = (spent/lim)*100 if lim>0 else 0
-                c_txt, c_bar = st.columns([1, 3])
-                with c_txt: st.write(f"**{cat}**"); st.caption(f"{spent:,.0f} / {lim:,.0f} TL")
-                with c_bar:
-                    color = "red" if pct > 100 else "orange" if pct > 80 else "green"
-                    st.markdown(f"""<div style="width:100%; background:#333; height:10px; border-radius:5px;"><div style="width:{min(pct,100)}%; background:{color}; height:100%; border-radius:5px;"></div></div>""", unsafe_allow_html=True)
+        df_g = df[(df['date'].dt.month==now.month) & (df['type']=='Gider')]
+        if lims:
+            for c, l in lims.items():
+                s = df_g[df_g['category']==c]['amount'].sum()
+                p = (s/l)*100 if l>0 else 0
+                col = "red" if p>100 else "orange" if p>80 else "green"
+                st.write(f"**{c}** ({s:,.0f}/{l:,.0f})")
+                st.markdown(f"""<div style="width:100%; background:#333; height:8px; border-radius:4px;"><div style="width:{min(p,100)}%; background:{col}; height:100%; border-radius:4px;"></div></div>""", unsafe_allow_html=True)
         else: st.info("Limit yok.")
 
-    # --- ABONELİKLER ---
-    elif menu == "🔄 Abonelik Takibi":
-        st.title("Abonelik Yönetimi")
-        df_subs = pd.DataFrame()
-        if not df.empty: df_subs = df[df['category'] == "Abonelik - İnternet/Dijital"].copy()
-        
-        if not df_subs.empty:
-            subs_data = []
-            for _, row in df_subs.iterrows():
-                next_date = sonraki_odeme_bul(row['date'])
-                days_left = (next_date - datetime.now().date()).days
-                status = "✅ Ödendi" if days_left > 20 else "⏳ Yaklaşıyor"
-                subs_data.append({"Hizmet": row['description'], "Tutar": f"{row['amount']} ₺", "Sonraki Ödeme": next_date.strftime("%d.%m.%Y"), "Durum": status})
-            st.dataframe(pd.DataFrame(subs_data), use_container_width=True)
-        else: st.warning("Abonelik yok.")
+    elif menu == "🔄 Abonelikler":
+        st.title("Abonelikler")
+        df_sub = df[df['category']=="Abonelik - İnternet/Dijital"]
+        if not df_sub.empty:
+            d = []
+            for _, r in df_sub.iterrows():
+                nx = sonraki_odeme_bul(r['date'])
+                rem = (nx - datetime.now().date()).days
+                stt = "✅ Ödendi" if rem>20 else "⏳ Yaklaşıyor"
+                d.append({"Hizmet":r['description'], "Tutar":f"{r['amount']} ₺", "Sonraki":nx.strftime("%d.%m.%Y"), "Durum":stt})
+            st.dataframe(pd.DataFrame(d), use_container_width=True)
+        else: st.warning("Yok.")
 
-    # --- RAPORLAR ---
-    elif menu == "🗂️ Geçmiş Raporlar":
-        st.title("Geçmiş Raporlar")
+    elif menu == "🗂️ Raporlar":
+        st.title("Arşiv")
         if not df.empty:
-            df['Period'] = df['date'].dt.strftime('%Y-%m')
-            selected_p = st.selectbox("Dönem", sorted(df['Period'].unique(), reverse=True))
-            df_p = df[df['Period'] == selected_p]
-            inc = df_p[df_p['type']=='Gelir']['amount'].sum()
-            exp = df_p[df_p['type']=='Gider']['amount'].sum()
-            st.metric("Net", f"{inc-exp:,.2f} ₺")
-            st.dataframe(df_p.sort_values('date'), use_container_width=True)
+            df['P'] = df['date'].dt.strftime('%Y-%m')
+            sel = st.selectbox("Dönem", sorted(df['P'].unique(), reverse=True))
+            df_p = df[df['P']==sel]
+            i = df_p[df_p['type']=='Gelir']['amount'].sum()
+            e = df_p[df_p['type']=='Gider']['amount'].sum()
+            st.metric("Net", f"{i-e:,.2f} ₺")
+            st.dataframe(df_p)
         else: st.info("Veri yok.")
